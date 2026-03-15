@@ -345,7 +345,7 @@ function Push-ExecScheduledCommand {
     }
 
     # For orchestrator-based commands, skip post-execution alerts as they will be handled by the orchestrator's post-execution function
-    if ($Results -and $Item.Command -notin $OrchestratorBasedCommands) {
+    if ($Results -and $Item.Command -notin $OrchestratorBasedCommands -and -not [string]::IsNullOrWhiteSpace($Task.PostExecution)) {
         Write-Information "Sending task results to post execution target(s): $($Task.PostExecution -join ', ')."
         Send-CIPPScheduledTaskAlert -Results $Results -TaskInfo $task -TenantFilter $Tenant -TaskType $TaskType
     }
@@ -355,12 +355,22 @@ function Push-ExecScheduledCommand {
         if ($Item.Command -in $OrchestratorBasedCommands) {
             Write-Information "Command $($Item.Command) is orchestrator-based. Skipping task state update - will be handled by post-execution."
             if (!$IsMultiTenantExecution) {
-                # Update task state to 'Running' to indicate orchestration is in progress
-                Update-AzDataTableEntity -Force @Table -Entity @{
-                    PartitionKey = $task.PartitionKey
-                    RowKey       = $task.RowKey
-                    Results      = 'Orchestration in progress'
-                    TaskState    = 'Processing'
+                if ($State -eq 'Failed') {
+                    # The orchestrator command itself failed to dispatch - record the failure so the task isn't lost
+                    Update-AzDataTableEntity -Force @Table -Entity @{
+                        PartitionKey = $task.PartitionKey
+                        RowKey       = $task.RowKey
+                        Results      = "$results"
+                        TaskState    = 'Failed'
+                    }
+                } else {
+                    # Update task state to 'Processing' to indicate orchestration is in progress
+                    Update-AzDataTableEntity -Force @Table -Entity @{
+                        PartitionKey = $task.PartitionKey
+                        RowKey       = $task.RowKey
+                        Results      = 'Orchestration in progress'
+                        TaskState    = 'Processing'
+                    }
                 }
             }
         } elseif ($IsMultiTenantExecution) {
